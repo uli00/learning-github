@@ -83,8 +83,9 @@ Fork 数量: 0
 
 **常用接口速查：**
 
-接口	用途
-GET /repos/{owner}/{repo}	获取某个仓库的详细信息
-GET /search/repositories	搜索仓库（按 Star、语言、时间等筛选）
-GET /repos/{owner}/{repo}/stargazers	获取点了 Star 的用户列表
+| 接口 | 用途 |
+|------|---------|
+|```GET /repos/{owner}/{repo}```| 获取某个仓库的详细信息 |
+|```GET /search/repositories``` | 搜索仓库（按 Star、语言、时间等筛选） |
+|```GET /repos/{owner}/{repo}```/stargazers | 获取点了 Star 的用户列表 |
 
