@@ -169,6 +169,7 @@ gh auth login
 - 选择 **GitHub.com**
 - 选择 **HTTPS**
 - 选择 **Login with a web browser**，在浏览器里授权
+- 当提示 `Authenticate Git with your GitHub credentials? (Y/n)` 时，输入 **Y** 回车
 
 授权完成后，以后执行 `git push` 就不用输密码了。
 
