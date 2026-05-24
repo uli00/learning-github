@@ -188,3 +188,100 @@ git push
 | `git add <文件>` | 把文件加入暂存区 |
 | `git commit -m "说明"` | 提交更改，附带说明文字 |
 | `git push` | 推送到 GitHub 上 |
+
+### 五、Git 进阶：分支与合并
+
+#### 查看和创建分支
+
+```bash
+git branch
+```
+
+输出中 `*` 标记当前所在分支。创建新分支：
+
+```bash
+git branch 分支名
+```
+
+**重要：新分支会包含当前分支上的全部文件。** 从 main 创建分支时，main 上的一切都会自动"拷贝"过来，不需要手动操作。
+
+#### 切换分支
+
+```bash
+git checkout 分支名
+```
+
+创建并切换到新分支（一步完成）：
+
+```bash
+git checkout -b 分支名
+```
+
+#### 合并分支
+
+切回 main 后，把某个分支的改动合并过来：
+
+```bash
+git checkout main
+git merge 分支名
+```
+
+如果两个分支没有修改同一处，Git 会 Fast-forward（快进）自动合并。
+
+#### 分支在真实项目中的工作流
+
+| 分支 | 用途 |
+|------|------|
+| `main` | 稳定版，随时可以发布 |
+| `feature-xxx` | 开发新功能，不影响主线 |
+| `bugfix-xxx` | 修复 bug，完成后合并回 main |
+
+典型流程：
+1. 从 main 创建功能分支 `git checkout -b feature-新功能`
+2. 在功能分支上开发、提交
+3. 完成后切回 main `git checkout main`
+4. 合并功能分支 `git merge feature-新功能`
+5. 删除已合并的分支 `git branch -d feature-新功能`（可选）
+
+#### 解决合并冲突
+
+当两个分支修改了同一文件的同一处，Git 无法自动决定保留谁，就会报冲突：
+
+```
+CONFLICT (content): Merge conflict in 文件名
+Automatic merge failed; fix conflicts and then commit the result.
+```
+
+冲突文件的格式：
+
+```
+<<<<<<< HEAD
+main 分支的内容
+=======
+另一个分支的内容
+>>>>>>> 分支名
+```
+
+**解决步骤：**
+
+1. 打开冲突文件，找到 `<<<<<<<`、`=======`、`>>>>>>>` 标记
+2. 编辑文件，删除标记，保留你想要的内容（可以两个都保留，也可以只选一个）
+3. 保存文件
+4. `git add 文件名` — 标记冲突已解决
+5. `git commit -m "解决合并冲突"` — 完成合并
+
+**如果不想合并了，可以取消：**
+
+```bash
+git merge --abort
+```
+
+### 六、其他常用命令
+
+| 命令 | 作用 |
+|------|------|
+| `git pull` | 拉取远程更新并合并到本地 |
+| `git log --oneline` | 简洁查看提交历史 |
+| `git diff` | 查看未提交的改动 |
+| `git diff HEAD~1` | 查看最近一次提交前后的差异 |
+| `.gitignore` | 文件，列出需要 Git 忽略的文件（如 `.DS_Store`、`*.pyc`、`.env`） |
