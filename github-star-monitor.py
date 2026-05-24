@@ -91,6 +91,110 @@ def get_repo_info(repo_name):
     return github_api_request(url)
 
 
+def get_repo_readme(repo_name):
+    """获取项目的 README 内容（用于深度分析）"""
+    url = f"https://api.github.com/repos/{repo_name}/readme"
+    data = github_api_request(url)
+    if data and "content" in data:
+        import base64
+        content = data["content"].replace("\n", "")
+        try:
+            return base64.b64decode(content).decode("utf-8", errors="ignore")
+        except:
+            pass
+    return ""
+
+
+def analyze_project(readme_text):
+    """从 README 文本中提炼项目关键信息"""
+    if not readme_text:
+        return {
+            "one_liner": "暂无详细信息",
+            "key_features": [],
+            "tech_stack": "未知",
+            "use_case": "需进一步评估",
+        }
+    
+    # 提取前 2000 字符分析
+    text = readme_text[:2000].lower()
+    
+    # 一句话简介（取第一段有意义的纯文字）
+    lines = readme_text.split("\n")
+    one_liner = ""
+    for line in lines:
+        line = line.strip().strip("#").strip()
+        # 跳过图片标签、空行、HTML标签
+        if not line or line.startswith("![") or line.startswith("<") or len(line) < 10:
+            continue
+        one_liner = line[:150]
+        break
+    
+    if not one_liner:
+        one_liner = "暂无详细描述"
+    
+    # 技术栈识别
+    tech_keywords = {
+        "Python": ["python", "pip", "requirements.txt"],
+        "TypeScript/Node.js": ["typescript", "node", "npm", "tsconfig"],
+        "Rust": ["rust", "cargo", "cargo.toml"],
+        "Go": ["golang", "go.mod", "go.sum"],
+        "Java": ["java", "maven", "gradle", "pom.xml"],
+        "React": ["react", "jsx", "tsx"],
+        "Vue": ["vue", "vite"],
+        "Docker": ["docker", "dockerfile", "docker-compose"],
+    }
+    
+    detected_tech = []
+    for tech, keywords in tech_keywords.items():
+        if any(kw in text for kw in keywords):
+            detected_tech.append(tech)
+    
+    tech_stack = ", ".join(detected_tech) if detected_tech else "未知"
+    
+    # 关键特性提取（寻找 Features、特性、功能等段落）
+    key_features = []
+    in_features = False
+    for line in lines[:100]:  # 只看前100行
+        stripped = line.strip()
+        if any(kw in stripped.lower() for kw in ["feature", "特性", "功能", "highlights", "capabilit"]):
+            in_features = True
+            continue
+        if in_features and stripped.startswith("-") or stripped.startswith("*"):
+            feature = stripped[1:].strip()
+            if feature and len(feature) < 200:
+                key_features.append(feature[:120])
+            if len(key_features) >= 5:
+                break
+        elif in_features and (stripped.startswith("##") or stripped.startswith("#")):
+            break
+    
+    # 适用场景判断
+    use_case_keywords = {
+        "AI Agent/智能体": ["agent", "autonomous", "自主", "智能体", "task planning"],
+        "代码辅助": ["code", "programming", "coding", "refactor", "代码"],
+        "数据分析": ["data analysis", "analytics", "dashboard", "可视化"],
+        "自动化工作流": ["workflow", "automation", "自动化", "pipeline"],
+        "对话/聊天机器人": ["chat", "chatbot", "对话", "conversation"],
+        "MCP/工具调用": ["mcp", "tool use", "function calling", "tool calling"],
+        "知识管理/RAG": ["rag", "knowledge", "retrieval", "knowledge base", "知识"],
+        "技能/插件系统": ["skill", "plugin", "extension", "技能", "插件"],
+    }
+    
+    matched_scenarios = []
+    for scenario, keywords in use_case_keywords.items():
+        if any(kw in text for kw in keywords):
+            matched_scenarios.append(scenario)
+    
+    use_case = ", ".join(matched_scenarios) if matched_scenarios else "需进一步评估"
+    
+    return {
+        "one_liner": one_liner,
+        "key_features": key_features[:5],
+        "tech_stack": tech_stack,
+        "use_case": use_case,
+    }
+
+
 def _load_new_projects():
     filepath = get_new_projects_file()
     if not os.path.exists(filepath):
@@ -343,11 +447,34 @@ def generate_report():
                 pass
 
             new_tag = " 🆕" if is_new else ""
+            
+            # 抓取 README 做深度分析
+            print(f"  正在分析 {name}...")
+            readme = get_repo_readme(name)
+            analysis = analyze_project(readme)
+            
             md.append(f"### {i}. [{name}]({url}){new_tag}")
             if is_new:
                 md.append(f"> **新项目！** 创建 {days_old} 天")
-            else:
-                md.append(f"\n> {desc}\n")
+            md.append("")
+            md.append(f"**一句话简介：** {analysis['one_liner']}")
+            md.append("")
+            md.append(f"**适用场景：** {analysis['use_case']}")
+            md.append("")
+            md.append(f"**技术栈：** {analysis['tech_stack']}")
+            md.append("")
+            
+            if analysis["key_features"]:
+                md.append("**核心功能：**")
+                for feat in analysis["key_features"]:
+                    md.append(f"- {feat}")
+                md.append("")
+            
+            # 搬迁建议
+            if analysis["use_case"] != "需进一步评估":
+                md.append(f"**💡 可借鉴方向：** {analysis['use_case']}")
+                md.append("")
+            
             md.append(f"| 指标 | 值 |")
             md.append(f"|------|-----|")
             md.append(f"| 今日 Star | +{today_stars} |")
@@ -369,10 +496,16 @@ def generate_report():
             md.append(f"### ⚠️ 达到上报阈值（7天增长 > {NEW_PROJECT_REPORT_THRESHOLD} Star）\n")
             for proj in alert_projects:
                 md.append(f"**[{proj['name']}]({proj['url']})**")
-                md.append(f"> {proj.get('description', '暂无描述')}")
+                # 深度分析
+                readme = get_repo_readme(proj["name"])
+                analysis = analyze_project(readme)
+                md.append(f"> **简介：** {analysis['one_liner']}")
+                md.append(f"> **适用场景：** {analysis['use_case']} | **技术栈：** {analysis['tech_stack']}")
                 md.append(f"- 初始 Star: {proj['initial_stars']} | 跟踪期增长: +{proj['growth']}")
                 daily_str = " | ".join([f"{d}: +{c}" for d, c in sorted(proj["daily"].items())])
                 md.append(f"- 每日增长: {daily_str}")
+                if analysis["use_case"] != "需进一步评估":
+                    md.append(f"- **💡 可借鉴方向：** {analysis['use_case']}")
                 md.append("")
 
         if tracking_projects:
