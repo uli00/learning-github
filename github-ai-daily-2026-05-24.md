@@ -1,20 +1,42 @@
 # GitHub AI 项目每日 Star 增长监控报告
 
-> 生成时间：2026-05-24 12:16 UTC
-> 数据采集截至：2026-05-24T12:16:10Z
+> 生成时间：2026-05-24 12:18 UTC
+> 数据采集截至：2026-05-24T12:18:23Z
 
 ---
 
 ## 一、成熟 AI 项目（Star 增长排行）
 
-今日无符合条件的成熟 AI 项目。
+共 **1** 个项目
+
+| 排名 | 项目 | 今日 +Star | 总 Star | 语言 |
+|------|------|-----------|---------|------|
+| 1 | [rohitg00/agentmemory](https://github.com/rohitg00/agentmemory) | +2 | 17,101 | TypeScript |
+
+### 详细项目信息
+
+**1. [rohitg00/agentmemory](https://github.com/rohitg00/agentmemory)**
+
+> #1 Persistent memory for AI coding agents based on real-world benchmarks
+
+| 指标 | 值 |
+|------|-----|
+| 今日 Star | +2 |
+| 总 Star | 17,101 |
+| Fork | 1403 |
+| 标签 | agentmemory, agents, ai, claude, claudecode |
 
 ---
 
 ## 二、新潜力项目跟踪（总 Star < 100，持续观察 7 天）
 
-暂无跟踪中的新项目。
+### 正在跟踪中的项目（尚未达到阈值）
 
+| 项目 | 初始Star | 跟踪期增长 | 发现日期 |
+|------|---------|-----------|---------|
+| [mattc95/2026-AI-DETECTOR-BENCHMARK](https://github.com/mattc95/2026-AI-DETECTOR-BENCHMARK) | 38 | +1 | 2026-05-24 |
+
+> 阈值规则：7 天内增长超过 50 Star 时自动上报
 
 ---
 
