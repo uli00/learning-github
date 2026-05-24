@@ -46,7 +46,7 @@
 
 GitHub 提供了官方 API，可以用程序方式获取数据，不用手动打开网页。
 
-**官方文档地址：** [https://docs.github.com/en/rest]
+**官方文档地址：**[rest.docs.github.com](https://docs.github.com/en/rest)
 
 **最简单的例子 — 获取一个仓库的信息：**
 
