@@ -156,20 +156,27 @@ git commit -m "添加 Git 学习笔记"
 
 `-m` 后面是提交说明，描述这次改了什么。每次 commit 都会生成一个唯一的哈希值。
 
-**5. 推送到 GitHub**
+**5. 配置 push 认证（首次推送前必须完成）**
 
-```bash
-git push
-```
-
-**push 认证问题：** GitHub 已经不支持密码推送。最简单的解决方案：
+GitHub 已经不支持密码推送，首次 `git push` 前需要完成认证。最简单的方式是安装 GitHub CLI：
 
 ```bash
 brew install gh
 gh auth login
 ```
 
-选择 GitHub.com → HTTPS → Login with a web browser，在浏览器里授权后，以后 `git push` 就不用输密码了。
+按提示操作：
+- 选择 **GitHub.com**
+- 选择 **HTTPS**
+- 选择 **Login with a web browser**，在浏览器里授权
+
+授权完成后，以后执行 `git push` 就不用输密码了。
+
+**6. 推送到 GitHub**
+
+```bash
+git push
+```
 
 **日常使用总结：**
 
