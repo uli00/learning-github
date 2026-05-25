@@ -18,17 +18,39 @@ from collections import Counter
 
 # --- 配置 ---
 
-AI_KEYWORDS = [
+# 第一阶段：粗筛关键词（宽松，宁可多抓）
+ROUGH_KEYWORDS = [
     "agent", "llm", "gpt", "mcp", "rag",
+    "ai-", "ai_",  # 通用 AI 标识（限制格式减少噪音）
+    "codex", "copilot",
+    "diffusion", "stable-diffusion",
+    "transformer", "neural", "deep-learning", "deeplearning",
+    "generative", "genai", "gen-ai",
     "langchain", "claude", "anthropic", "openai",
-    "copilot", "autogpt", "babyagi", "crewai",
+    "autogpt", "babyagi", "crewai",
     "dspy", "smolagents", "agno", "aider",
-    "智能体", "大模型", "agentgpt", "llama",
-    "vllm", "ollama", "huggingface", "transformers",
+    "llama", "vllm", "ollama",
+    "huggingface", "transformers",
     "embedding", "inference", "finetune", "fine-tune",
     "skill", "tool-use", "function-calling",
-    "workflow", "automation", "multi-agent", "multiagent",
-    "chatbot", "generative", "diffusion",
+    "multi-agent", "multiagent",
+    "chatbot", "chat-bot",
+    "智能体", "大模型",
+    "agentgpt", "seedance", "sora", "midjourney",
+]
+
+# 第二阶段：README 精筛关键词（更精准，避免噪音）
+README_KEYWORDS = ROUGH_KEYWORDS + [
+    # 补充：README 中常见但仓库名可能没有的词
+    "artificial intelligence", "machine learning", "deep learning",
+    "large language model", "foundation model", "pre-trained",
+    "prompt", "fine-tuning", "model training",
+    "nlp", "natural language", "computer vision",
+    "text generation", "image generation", "video generation",
+    "llm application", "ai agent", "autonomous agent",
+    "retrieval augmented", "vector database", "vector store",
+    "knowledge base", "knowledge graph",
+    "openai api", "anthropic api", "azure openai",
 ]
 
 EXCLUDE_KEYWORDS = [
@@ -70,20 +92,37 @@ def github_api_request(url):
         return None
 
 
-def is_ai_related(repo_info):
+def is_ai_related(repo_info, readme_text=""):
+    """两阶段 AI 项目筛选：
+    阶段1：仓库名 + 描述 + topics 粗筛（用 ROUGH_KEYWORDS）
+    阶段2：README 内容精筛（用 README_KEYWORDS）
+    """
     if not repo_info:
-        return False
+        return False, False
+    
     name = (repo_info.get("name") or "").lower()
     desc = (repo_info.get("description") or "").lower()
     topics = [t.lower() for t in repo_info.get("topics", [])]
-    all_text = f"{name} {desc} {' '.join(topics)}"
+    rough_text = f"{name} {desc} {' '.join(topics)}"
+    
+    # 排除黑名单
     for kw in EXCLUDE_KEYWORDS:
-        if kw in all_text:
-            return False
-    for kw in AI_KEYWORDS:
-        if kw in all_text:
-            return True
-    return False
+        if kw in rough_text:
+            return False, False
+    
+    # 阶段1：粗筛
+    rough_match = any(kw in rough_text for kw in ROUGH_KEYWORDS)
+    if not rough_match:
+        return False, False  # 粗筛都没过，直接淘汰
+    
+    # 阶段2：README 精筛（如果有 README 内容）
+    if readme_text:
+        readme_lower = readme_text.lower()
+        readme_match = any(kw in readme_lower for kw in README_KEYWORDS)
+        return True, readme_match  # (粗筛通过, README确认)
+    
+    # 没有 README 内容时，粗筛通过但无法确认
+    return True, True  # 默认放行（可能是老项目已知 AI 项目）
 
 
 def get_repo_info(repo_name):
@@ -296,21 +335,34 @@ def collect_new():
         if repo_name in new_projects:
             continue
 
-        if total_stars < NEW_PROJECT_MAX_STARS and is_ai_related(repo):
-            new_projects[repo_name] = {
-                "full_name": repo_name,
-                "description": repo.get("description", ""),
-                "html_url": repo.get("html_url", ""),
-                "first_seen": today_str,
-                "initial_stars": total_stars,
-                "language": repo.get("language", ""),
-                "topics": repo.get("topics", []),
-                "daily": {today_str: total_stars},
-                "last_updated": now,
-                "reported": False,
-            }
-            found += 1
-            print(f"  🆕 {repo_name} (Star={total_stars})")
+        if total_stars >= NEW_PROJECT_MAX_STARS:
+            continue
+
+        # 两阶段筛选
+        readme_text = ""
+        if len(new_projects) < 15:  # 控制 API 请求数
+            readme_text = get_repo_readme(repo_name)
+
+        is_rough, is_confirmed = is_ai_related(repo, readme_text)
+        if not is_rough:
+            continue
+        if not is_confirmed:
+            continue
+
+        new_projects[repo_name] = {
+            "full_name": repo_name,
+            "description": repo.get("description", ""),
+            "html_url": repo.get("html_url", ""),
+            "first_seen": today_str,
+            "initial_stars": total_stars,
+            "language": repo.get("language", ""),
+            "topics": repo.get("topics", []),
+            "daily": {today_str: total_stars},
+            "last_updated": now,
+            "reported": False,
+        }
+        found += 1
+        print(f"  🆕 {repo_name} (Star={total_stars})")
 
     # 清理过期
     cutoff = (datetime.now(timezone.utc) - timedelta(days=NEW_PROJECT_TRACK_DAYS)).strftime("%Y-%m-%d")
@@ -364,19 +416,34 @@ def generate_report():
         if total_stars < MIN_TOTAL_STARS:
             continue
 
-        if is_ai_related(repo_info):
-            mature_repos.append({
-                "full_name": repo_name,
-                "today_stars": count,
-                "total_stars": total_stars,
-                "forks_count": repo_info.get("forks_count", 0),
-                "language": repo_info.get("language"),
-                "topics": repo_info.get("topics", []),
-                "html_url": repo_info.get("html_url", ""),
-                "description": repo_info.get("description"),
-                "created_at": repo_info.get("created_at", ""),
-            })
-            print(f"  ✓ {repo_name} (+{count})")
+        # 两阶段筛选
+        # 先抓 README（限制：最多抓 15 个候选，避免 API 频率限制）
+        readme_text = ""
+        if len(mature_repos) < 15:
+            readme_text = get_repo_readme(repo_name)
+            if readme_text:
+                print(f"  📖 {repo_name} - README {len(readme_text)} 字符")
+
+        is_rough, is_confirmed = is_ai_related(repo_info, readme_text)
+        if not is_rough:
+            continue
+        if not is_confirmed:
+            print(f"  ✗ {repo_name} - 粗筛通过但 README 未确认 AI 相关，跳过")
+            continue
+
+        mature_repos.append({
+            "full_name": repo_name,
+            "today_stars": count,
+            "total_stars": total_stars,
+            "forks_count": repo_info.get("forks_count", 0),
+            "language": repo_info.get("language"),
+            "topics": repo_info.get("topics", []),
+            "html_url": repo_info.get("html_url", ""),
+            "description": repo_info.get("description"),
+            "created_at": repo_info.get("created_at", ""),
+            "readme": readme_text[:3000] if readme_text else "",
+        })
+        print(f"  ✓ {repo_name} (+{count}, 总计 {total_stars:,} Star)")
 
         if len(mature_repos) >= MAX_REPOS:
             break
