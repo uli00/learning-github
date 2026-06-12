@@ -285,3 +285,228 @@ git merge --abort
 | `git diff` | 查看未提交的改动 |
 | `git diff HEAD~1` | 查看最近一次提交前后的差异 |
 | `.gitignore` | 文件，列出需要 Git 忽略的文件（如 `.DS_Store`、`*.pyc`、`.env`） |
+
+---
+
+### 七、SkillOpt 源码学习（微软 Agent 技能自动优化框架）
+
+> 仓库地址：https://github.com/microsoft/SkillOpt
+> 论文：https://arxiv.org/abs/2605.23904
+> 核心思想：**训练过程（procedure），而非模型权重（weights）**
+
+#### 7.1 一句话理解 SkillOpt
+
+SkillOpt 把 Agent 的"技能文档"（一份自然语言写成的操作指南 .md 文件）当作可训练的"参数"，通过类似深度学习训练循环的方式自动迭代优化这份文档，而 Agent 使用的 LLM 模型本身完全不动（冻结）。
+
+打个比方：传统做法是训练大脑（微调模型权重），SkillOpt 的做法是给大脑写一本越来越好的操作手册。
+
+#### 7.2 核心概念：与深度学习的类比
+
+| 深度学习概念 | SkillOpt 对应 | 说明 |
+|---|---|---|
+| 模型权重 | 技能文档 (skill.md) | 被优化的对象 |
+| 前向传播 | Rollout（执行任务） | 用当前技能跑一批任务，记录结果 |
+| 反向传播 | Reflect（反思分析） | 分析成功/失败的轨迹，找出改进点 |
+| 梯度聚合 | Aggregate（合并补丁） | 把多个分析结果合并成一份统一的修改方案 |
+| 梯度裁剪 | Select（排序选择） | 只保留最重要的 N 个修改（文本学习率） |
+| 参数更新 | Update（应用编辑） | 把修改应用到技能文档 |
+| 验证集评估 | Gate（验证门） | 在留出集上验证，只有分数提升才接受修改 |
+| 学习率 | edit_budget（编辑预算） | 每步最多做几条修改，防止大改破坏好的规则 |
+| 慢速学习/EMA | Slow Update（慢更新） | 每个 epoch 结束后做跨 epoch 的纵向对比总结 |
+
+#### 7.3 仓库目录结构
+
+```
+SkillOpt/
+├── skillopt/              # 核心库（论文训练循环）
+│   ├── engine/trainer.py  # 训练主循环（最重要的文件，~2400行）
+│   ├── optimizer/         # 优化器模块
+│   │   ├── clip.py        # "梯度裁剪"：编辑排序与选择
+│   │   ├── skill.py       # 编辑应用（append/insert/replace/delete）
+│   │   ├── rewrite.py     # 全量重写模式
+│   │   ├── slow_update.py # 慢更新（epoch 级纵向反思）
+│   │   ├── meta_skill.py  # 优化器元记忆（跨 epoch 经验）
+│   │   ├── scheduler.py   # 学习率调度（constant/linear/cosine）
+│   │   └── skill_aware.py # 技能感知反思（附录笔记机制）
+│   ├── gradient/          # "梯度"计算
+│   │   ├── reflect.py     # 反思引擎：minibatch 轨迹分析
+│   │   └── aggregate.py   # 聚合引擎：层次化补丁合并
+│   ├── evaluation/
+│   │   └── gate.py        # 验证门：accept/reject 决策
+│   ├── envs/              # 环境适配器（6个 benchmark）
+│   │   ├── base.py        # 抽象基类 EnvAdapter
+│   │   ├── alfworld/      # 家务机器人环境
+│   │   ├── searchqa/      # 搜索问答
+│   │   ├── spreadsheetbench/  # Excel 操作
+│   │   ├── livemathematicianbench/  # 数学推理
+│   │   ├── docvqa/        # 文档视觉问答
+│   │   └── officeqa/      # Office 文档问答
+│   ├── model/             # LLM 后端
+│   │   ├── common.py      # 统一的 chat_optimizer / chat_target 接口
+│   │   ├── azure_openai.py
+│   │   ├── claude_backend.py
+│   │   ├── codex_backend.py
+│   │   ├── qwen_backend.py
+│   │   └── minimax_backend.py
+│   ├── prompts/           # Prompt 模板（.md 文件）
+│   │   ├── analyst_error.md    # 失败分析师 prompt
+│   │   ├── analyst_success.md  # 成功分析师 prompt
+│   │   ├── ranking.md          # 编辑排序 prompt
+│   │   ├── merge_*.md          # 合并阶段 prompts
+│   │   ├── slow_update.md      # 慢更新 prompt
+│   │   └── meta_skill.md       # 元技能 prompt
+│   ├── config.py          # YAML 配置加载（支持继承）
+│   └── types.py           # 数据结构定义（Edit/Patch/RolloutResult 等）
+├── skillopt_sleep/        # Sleep 模式（部署后夜间学习）
+├── plugins/               # 插件（Claude Code / Codex / Copilot）
+├── ckpt/                  # 训练产出示例（best_skill.md）
+├── configs/               # YAML 配置文件
+├── data/                  # 数据集 train/val/test 分割
+├── scripts/               # 训练入口脚本
+│   └── train.py           # 主入口
+└── tests/                 # 单元测试
+```
+
+#### 7.4 六阶段训练流水线（核心循环）
+
+每一步（step）执行以下 6 个阶段：
+
+```
+① Rollout → ② Reflect → ③ Aggregate → ④ Select → ⑤ Update → ⑥ Evaluate
+  (执行)      (反思)       (聚合)         (选择)      (更新)      (验证)
+```
+
+**① Rollout（执行任务）**
+- 用当前 skill.md + 目标 LLM 去跑一批训练任务
+- 每个任务产生一条轨迹（对话记录、工具调用、最终得分）
+- 返回 `hard`（0/1 是否完全正确）和 `soft`（部分分数）
+
+**② Reflect（反思分析）**
+- 把 Rollout 结果按成功/失败分成两组
+- 每组再分成多个 minibatch（类似小批量 SGD）
+- 对每个 minibatch 调用优化器 LLM 分析轨迹，产出修改建议（Patch）
+- 失败分析师找"系统性错误模式"，成功分析师找"值得固化的好模式"
+- 关键：多个 minibatch 可以**并行**执行（ThreadPoolExecutor）
+
+**③ Aggregate（聚合补丁）**
+- 把所有 minibatch 产出的 Patch 合并为一份
+- 采用**层次化合并**：先合并失败类 Patch，再合并成功类，最后两者合一
+- 合并时失败补丁优先级高于成功补丁
+- 同一层级的合并也可以并行
+
+**④ Select（排序选择 = 梯度裁剪）**
+- 如果合并后的编辑数超过预算 L（edit_budget），调用优化器 LLM 排序
+- 按"系统性影响 > 互补性 > 通用性 > 可操作性"排序
+- 只保留前 L 个最重要的编辑
+- 这就是"文本学习率"——防止一步改太多把好的规则覆盖掉
+
+**⑤ Update（应用编辑）**
+- 按顺序把编辑应用到 skill.md：
+  - `append`：在文档末尾追加（在保护区之前）
+  - `insert_after`：在指定位置后插入
+  - `replace`：替换指定文本
+  - `delete`：删除指定文本
+- **保护区机制**：`<!-- SLOW_UPDATE_START -->` 和 `<!-- SLOW_UPDATE_END -->` 之间的内容不能被常规编辑修改
+
+**⑥ Evaluate（验证门）**
+- 在留出验证集（valid_seen）上跑候选技能
+- 与当前技能对比：
+  - 分数 > 当前 → 接受（accept）
+  - 分数 > 历史最高 → 接受并标记为新最佳（accept_new_best）
+  - 分数 ≤ 当前 → 拒绝（reject），回退到当前技能
+- 被拒绝的编辑会记录到 step_buffer，下一步的分析时可以看到，避免重蹈覆辙
+
+#### 7.5 三个关键的稳定机制
+
+**1. 文本学习率（Edit Budget）**
+- 每步最多做 L 条修改（默认 L=4）
+- 可选调度器：constant（固定）/ linear（线性衰减）/ cosine（余弦衰减）
+- 防止"大改"把已经有效的规则覆盖掉
+
+**2. 被拒绝编辑缓冲（Rejected Buffer / Step Buffer）**
+- 每步结束后，把失败模式和被拒绝的编辑记录下来
+- 下一步反思时作为上下文传入："这些改法试过了没用，别再试了"
+- 类似人类 debug 时记住"这个方法不行"
+
+**3. 慢更新（Slow Update）+ 元技能（Meta Skill）**
+- **慢更新**：每个 epoch 结束后，对比上一个 epoch 和当前 epoch 在同一批样本上的表现
+  - 分类为：improved（进步）、regressed（退步）、persistent_fail（一直失败）、stable_success（一直成功）
+  - 优化器分析这些纵向变化，写入技能文档的保护区（SLOW_UPDATE 区）
+  - 保护区内的内容只有慢更新能修改，常规编辑碰不到
+- **元技能**：优化器自己的"记忆"
+  - 不改技能文档，而是记住"哪些编辑策略有效/无效"
+  - 在后续步骤中作为上下文注入，提升优化器决策质量
+
+#### 7.6 数据类型流转
+
+整个流水线用一套统一的数据类贯穿：
+
+```python
+# 一条编辑操作
+Edit(op="append|insert_after|replace|delete", content="...", target="...")
+
+# 一组编辑 + 推理说明
+Patch(edits=[Edit, ...], reasoning="为什么要做这些修改")
+
+# 一个任务的执行结果
+RolloutResult(id="task_001", hard=0, soft=0.3, n_turns=5, fail_reason="...")
+
+# 分析师的原始输出
+RawPatch(patch=Patch, source_type="failure|success", batch_size=8)
+
+# 慢更新的结果
+SlowUpdateResult(reasoning="...", slow_update_content="...", action="accept")
+
+# 验证门的结果
+GateResult(action="accept_new_best", current_skill="...", best_score=0.85)
+```
+
+#### 7.7 环境适配器模式
+
+SkillOpt 用 `EnvAdapter` 抽象基类支持不同 benchmark，每个环境需要实现：
+
+| 方法 | 作用 |
+|------|------|
+| `setup(cfg)` | 一次性初始化 |
+| `build_train_env(batch_size, seed)` | 构建训练环境 |
+| `build_eval_env(env_num, split, seed)` | 构建评估环境 |
+| `rollout(env, skill, out_dir)` | 执行一批任务，返回结果列表 |
+| `reflect(results, skill, out_dir)` | 分析轨迹，返回补丁列表 |
+| `get_task_types()` | 返回任务类型列表 |
+
+Prompt 有两级优先级：环境专属 prompt > 通用默认 prompt。
+
+#### 7.8 SkillOpt-Sleep（部署后夜间学习）
+
+Sleep 是论文代码之外的实用延伸，用于部署后的持续学习。流程：
+
+```
+harvest（收割会话记录）→ mine（挖掘重复任务）→ replay（离线重放）
+→ consolidate（反思+编辑+验证门）→ stage（暂存提案）→ adopt（用户确认后采纳）
+```
+
+与训练循环的区别：
+- 数据源不是 benchmark 而是用户的真实使用记录
+- 同时优化技能（skill.md）和记忆（CLAUDE.md）
+- 有人工确认环节（staging → adopt），不是全自动
+- 已为 Claude Code、Codex、Copilot 三个 Agent 写了插件
+
+#### 7.9 训练产出示例
+
+看 `ckpt/alfworld/gpt5.5_skill.md`，这是一份经过训练的 ALFWorld 技能文档：
+- 开头是 Overview + Task Types 表格（任务分类和关键步骤）
+- 中间是 General Principles（通用原则，如"分解任务""系统探索""立即抓取"）
+- 然后是 Common Mistakes to Avoid（常见错误规避）
+- 再往后是越来越细化的搜索循环恢复策略
+- 末尾的 `<!-- SLOW_UPDATE_START -->` 区域是慢更新写入的纵向经验
+
+可以看到：初始技能可能只有基本规则，经过训练后，文档会自动积累大量针对失败模式的细化规则，比如"搜索账本过滤器""目的地-来源锁定"等——这些都是从失败轨迹中自动学到的。
+
+#### 7.10 对我的启发
+
+1. **技能是可以自动优化的**：不需要人手动改 prompt/skill，只要有评估标准就能自动迭代
+2. **"训练过程不训练模型"**：LLM 冻结不变，只优化给 LLM 看的指导文档
+3. **验证门是安全阀**：每次修改都经过验证集测试，不合格就回退，保证技能只升不降
+4. **两种学习速度**：快更新（每步）修具体问题，慢更新（每 epoch）做全局反思
+5. **可迁移性**：优化好的 skill.md 可以直接给不同模型用，不需要重新训练
+6. **与悟空/SkillAtlas 的关联**：悟空的技能体系理论上也可以用类似方法自动优化——用 eval run 结果驱动技能迭代
